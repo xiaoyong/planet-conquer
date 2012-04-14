@@ -4,7 +4,8 @@ require 'net/http'
 SERVER = "localhost"
 PORT = 9999
 ROOM = 0
-RATIO = 0.618 # within [0, 1], using the Golden Ratio
+AGGRESION = 0.8 # 0.8 might be a good choice after trying 0.618, 0.7, 0.8, 0.9 and 1.0
+PRESERVE = 1
 
 class PlanetAI
   def initialize
@@ -89,10 +90,10 @@ class PlanetAI
       return
     elsif left_planets.size == @my_planets.size
       # Check whether moving enemies exist
-      @eliminate_flag = true
       moving_enemies = @info['moves'].select { |m| m[0] != @me['seq'] }
       if ! moving_enemies.empty?
         puts "Eliminating left enemies! (planets #: #{left_planets.size} / #{@my_planets.size})"
+        @eliminate_flag = true
         moving_enemies.each do |m|
           @my_planets[m[2]][:rearness] = 0
           @my_planets[m[2]][:targets] = []
@@ -141,7 +142,7 @@ class PlanetAI
     spare_forces = {}
     @my_planets.each do |id, p|
       all_force = @info['holds'][id][1]
-      max_force = [(all_force * RATIO).to_i, all_force - 1].min
+      max_force = [(all_force * AGGRESION).to_i, all_force - 1].min
       if p[:rearness] == 0
         spare_force, nearest_round = spare_force_on_first_invasion(id)
         spare_force = [spare_force, max_force].min
@@ -226,11 +227,11 @@ class PlanetAI
 
       count = @info['holds'][id][1]
       if @eliminate_flag
-        left_force = (count * RATIO).to_i # Golden ratio
+        left_force = (count * (1-AGGRESION)).to_i
       elsif q['res'] > 1
         left_force = ((q['max'] - q['cos']) / q['res']).to_i
       else
-        left_force = (q['max'] * RATIO).to_i
+        left_force = (q['max'] * PRESERVE - q['cos']).to_i
       end
       left_force = [left_force, 1].max
       send = count - left_force
