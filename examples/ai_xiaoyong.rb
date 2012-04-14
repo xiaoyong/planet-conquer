@@ -4,6 +4,7 @@ require 'net/http'
 SERVER = "localhost"
 PORT = 9999
 ROOM = 0
+RATIO = 0.618 # within [0, 1], using the Golden Ratio
 
 class PlanetAI
   def initialize
@@ -23,7 +24,7 @@ class PlanetAI
   end
 
   def cmd_add
-    @me = cmd "add", name: "ai_xiaoyong", side: "ruby"
+    @me = cmd "add", name: "xiaoyong", side: "ruby"
   end
 
   def cmd_map
@@ -53,6 +54,7 @@ class PlanetAI
   def update_map
     @win_flag = false
     @lose_flag = false
+    @eliminate_flag = false
     @my_planets = {}
 
     @map['planets'].each_with_index do | p, ind |
@@ -87,6 +89,7 @@ class PlanetAI
       return
     elsif left_planets.size == @my_planets.size
       # Check whether moving enemies exist
+      @eliminate_flag = true
       moving_enemies = @info['moves'].select { |m| m[0] != @me['seq'] }
       if ! moving_enemies.empty?
         puts "Eliminating left enemies! (planets #: #{left_planets.size} / #{@my_planets.size})"
@@ -137,11 +140,14 @@ class PlanetAI
     # Compute spare forces for each planet
     spare_forces = {}
     @my_planets.each do |id, p|
+      all_force = @info['holds'][id][1]
+      max_force = [(all_force * RATIO).to_i, all_force - 1].min
       if p[:rearness] == 0
-        spare_forces[id] = spare_force_on_first_invasion(id)
+        spare_force, nearest_round = spare_force_on_first_invasion(id)
+        spare_force = [spare_force, max_force].min
+        spare_forces[id] = [spare_force, nearest_round]
       else
-        rate = 0.8
-        spare_forces[id] = [(@info['holds'][id][1] * rate).to_i, nil]
+        spare_forces[id] = [max_force, nil]
       end
     end
 
@@ -184,29 +190,6 @@ class PlanetAI
       end
     end
 
-    # Attack
-    @my_planets.select { |id, p| p[:rearness] == 0 && ! @my_planets[id][:processed?] }.each do |id, p|
-      if spare_forces[id][0] > 0
-        attack_moves = attack(id, p, spare_forces)
-        moves += attack_moves
-      end
-    end
-
-    # Rear planets: to support planets on the front line
-    # Support
-    @my_planets.select { |id, p| p[:rearness] > 0 && ! @my_planets[id][:processed?] }.each do |id, p|
-      q = @map['planets'][id]
-
-      count = @info['holds'][id][1]
-      send = count - ((q['max'] - q['cos']) / q['res']).to_i
-      send = [send, 0].max
-      if send > 0
-        m = [send, id, p[:targets]]
-        moves << m
-        update_info(m)
-      end
-    end
-
     # Retreat the planet that was marked as 'retreat' previously
     @my_planets.select { |id, p| p[:rearness] == 0 && @my_planets[id][:retreat?] && (! @my_planets[id][:processed?]) }.each do |id, p|
       targets = @my_planets[id][:my_neighbors].sort_by { |n| @my_planets[n[0]][:rearness] }
@@ -225,6 +208,36 @@ class PlanetAI
           moves += attack_moves
           puts "Transport: planet #{id}(#{attack_moves.first[0]}) -> #{attack_moves.first[2]}"
         end
+      end
+    end
+
+    # Attack
+    @my_planets.select { |id, p| p[:rearness] == 0 && ! @my_planets[id][:processed?] }.each do |id, p|
+      if spare_forces[id][0] > 0
+        attack_moves = attack(id, p, spare_forces)
+        moves += attack_moves
+      end
+    end
+
+    # Rear planets: to support planets on the front line
+    # Supply
+    @my_planets.select { |id, p| p[:rearness] > 0 && ! @my_planets[id][:processed?] }.each do |id, p|
+      q = @map['planets'][id]
+
+      count = @info['holds'][id][1]
+      if @eliminate_flag
+        left_force = (count * RATIO).to_i # Golden ratio
+      elsif q['res'] > 1
+        left_force = ((q['max'] - q['cos']) / q['res']).to_i
+      else
+        left_force = (q['max'] * RATIO).to_i
+      end
+      left_force = [left_force, 1].max
+      send = count - left_force
+      if send > 0
+        m = [send, id, p[:targets]]
+        moves << m
+        update_info(m)
       end
     end
 
@@ -330,7 +343,8 @@ class PlanetAI
       q = @map['planets'][t[0]]
 
       side, count = condition_after_given_rounds(t[0], t[1])
-      if side.nil? || (side == @me['seq'] && @info['holds'][id][1] > count) # It's empty or has been occupied by myself by then
+#      if side.nil? || (side == @me['seq'] && @info['holds'][id][1] > count) # It's empty or has been occupied by myself by then
+      if side.nil?
         nil_targets << [t[0]]
       elsif side != @me['seq'] && spare_forces[id][0] > count*q['def']
         targets << [ t[0], count * q['def']**2 / spare_forces[id][0].to_f ]

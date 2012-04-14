@@ -75,7 +75,7 @@ def run_all():
         time.sleep(1)
         p.start()
 
-    rooms = {0: [['ai_flreeyv2'], []]}
+    rooms = {0: [[], []]}
     # rooms.update({1: [['ai_flreeyv2', 'ai_flreeyv2'], []]})
     start_room(0, rooms)
     #start_room(1, rooms)
