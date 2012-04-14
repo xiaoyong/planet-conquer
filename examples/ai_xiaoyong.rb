@@ -36,11 +36,12 @@ class PlanetAI
       # neighbors[0]: id of neighbor planet
       # neighbors[1]: distance to the neighbor planet
     end
-	puts @map
+#    puts @map
   end
 
   def cmd_info
     @info = cmd "info"
+    exit if @info['status'] == 'finished'
   end
 
   def cmd_moves moves
@@ -50,6 +51,8 @@ class PlanetAI
   # Helper methods
   # See whether the planet is on the front line or at the rear by ownership of nearby planets
   def update_map
+    @win_flag = false
+    @lose_flag = false
     @my_planets = {}
 
     @map['planets'].each_with_index do | p, ind |
@@ -77,10 +80,32 @@ class PlanetAI
     # Compute rearness and path of my rear planets iteratively
     my_planets = @my_planets
     left_planets = @my_planets.select { |id, p| p[:rearness].nil? }
-    while left_planets.size > 0
+
+    if @my_planets.empty?
+      @lose_flag = true
+      puts "We lose! (planets #: #{left_planets.size} / #{@my_planets.size})"
+      return
+    elsif left_planets.size == @my_planets.size
+      # Check whether moving enemies exist
+      moving_enemies = @info['moves'].select { |m| m[0] != @me['seq'] }
+      if ! moving_enemies.empty?
+        puts "Eliminating left enemies! (planets #: #{left_planets.size} / #{@my_planets.size})"
+        moving_enemies.each do |m|
+          @my_planets[m[2]][:rearness] = 0
+          @my_planets[m[2]][:targets] = []
+          left_planets = @my_planets.select { |id, p| p[:rearness].nil? }
+        end
+      else
+        @win_flag = true
+        puts "We win! (planets #: #{left_planets.size} / #{@my_planets.size})"
+        return
+      end
+    end
+
+    while ! left_planets.empty?
       left_planets.each do |id, p|
         neighbors = @map['planets'][id]['neighbors'].reject { |n| my_planets[n[0]][:rearness].nil? }
-        next if neighbors.size == 0 # Very important! Used to be a bug!!!
+        next if neighbors.empty? # Very important! Used to be a bug!!!
         nearest_neighbor = neighbors.map { |n| [ n[0], my_planets[n[0]][:rearness] + n[1] ] }.min_by { |n| n[1] }
         @my_planets[id][:targets] = nearest_neighbor[0]
         @my_planets[id][:rearness] = nearest_neighbor[1]
@@ -88,6 +113,7 @@ class PlanetAI
 
       my_planets = @my_planets
       left_planets = @my_planets.select { |id, p| p[:rearness].nil? }
+#      puts "# of my planets: #{left_planets.size} / #{@my_planets.size}"
     end
   end
 
@@ -99,7 +125,9 @@ class PlanetAI
     @last_round_id = @info['round'] 
 
     update_map
-#	puts @my_planets
+#    puts @my_planets
+
+    return if @lose_flag || @win_flag
 
     moves = []
 
@@ -127,6 +155,7 @@ class PlanetAI
       # Get help from nearby rear planets or front line planets that have spare force
         @my_planets[id][:my_neighbors].select { |n| spare_forces[n[0]][0] > 0 && n[1] <= spare_forces[id][1] }.sort_by { |n| n[1] }.each do |n|
           send = spare_forces[n[0]][0]
+          next unless send > 0
           reinforce_moves << [send, n[0], id]
 
           reinforce += send
@@ -141,10 +170,10 @@ class PlanetAI
           moves += reinforce_moves
 
           # Mark them as processed
-          print "Reinforcements: planet <- #{id}"
+          print "Reinforcements: planet #{id} <-"
           reinforce_moves.each do |m|
-            print " #{m[1]}"
-            @my_planets[m[1]][:processed?] = true
+            update_info(m)
+            print " #{m[1]}(#{m[0]})"
           end
           puts
         elsif spare_forces[id][1] == 1
@@ -171,23 +200,30 @@ class PlanetAI
       count = @info['holds'][id][1]
       send = count - ((q['max'] - q['cos']) / q['res']).to_i
       send = [send, 0].max
-      moves << [send, id, p[:targets]] if send > 0
+      if send > 0
+        m = [send, id, p[:targets]]
+        moves << m
+        update_info(m)
+      end
     end
 
     # Retreat the planet that was marked as 'retreat' previously
-    @my_planets.select { |id, p| p[:rearness] == 0 && @my_planets[id][:retreat?] && ! @my_planets[id][:processed?] }.each do |id, p|
+    @my_planets.select { |id, p| p[:rearness] == 0 && @my_planets[id][:retreat?] && (! @my_planets[id][:processed?]) }.each do |id, p|
       targets = @my_planets[id][:my_neighbors].sort_by { |n| @my_planets[n[0]][:rearness] }
       if ! targets.empty?
         t = targets.last
         send = spare_forces[id][0]
-        moves << [send, id, t[0]]
-        @my_planets[id][:processed?] = true
-        puts "Retreat: planet #{id} -> #{t[0]}"
+        if send > 0
+          m = [send, id, t[0]]
+          moves << m
+          update_info(m)
+          puts "Retreat: planet #{id}(#{send}) -> #{t[0]}"
+        end
       else
         attack_moves = attack(id, p, spare_forces)
         if ! attack_moves.empty?
           moves += attack_moves
-          puts "Transport: planet #{id} -> #{attack_moves.first[2]}"
+          puts "Transport: planet #{id}(#{attack_moves.first[0]}) -> #{attack_moves.first[2]}"
         end
       end
     end
@@ -294,9 +330,9 @@ class PlanetAI
       q = @map['planets'][t[0]]
 
       side, count = condition_after_given_rounds(t[0], t[1])
-      if side.nil? || side == @me['seq'] # It's empty or has been occupied by myself by then
+      if side.nil? || (side == @me['seq'] && @info['holds'][id][1] > count) # It's empty or has been occupied by myself by then
         nil_targets << [t[0]]
-      elsif spare_forces[id][0] > count*q['def']
+      elsif side != @me['seq'] && spare_forces[id][0] > count*q['def']
         targets << [ t[0], count * q['def']**2 / spare_forces[id][0].to_f ]
       end
     end
@@ -304,18 +340,32 @@ class PlanetAI
     if ! nil_targets.empty? # Evenly send force to nil planets
       send = (spare_forces[id][0] / nil_targets.size).to_i
       nil_targets.each do |t|
-        moves << [send, id, t[0]]
-        @my_planets[id][:processed?] = true
+        if send > 0
+          m = [send, id, t[0]]
+          moves << m
+          update_info(m)
+        end
       end
     elsif ! targets.empty?
       target = targets.min_by { |t| t[1] }
       send = spare_forces[id][0]
-      moves << [send, id, target[0]]
-      @my_planets[id][:processed?] = true
+      if send > 0
+        m = [send, id, target[0]]
+        moves << m
+        update_info(m)
+      end
     end
 
     return moves
   end
+
+
+  def update_info(m)
+    @my_planets[m[1]][:processed?] = true
+    @info['holds'][m[1]][1] -= m[0]
+    @info['moves'] << [ @me['seq'], m[1], m[2], m[0], @map['planets'][m[1]]['neighbors'].find { |n| n[0] == m[2] }[1] ]
+  end
+
 end
 
 
