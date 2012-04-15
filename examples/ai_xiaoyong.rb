@@ -4,8 +4,9 @@ require 'net/http'
 SERVER = "localhost"
 PORT = 9999
 ROOM = 0
-AGGRESION = 0.8 # 0.8 might be a good choice after trying 0.618, 0.7, 0.8, 0.9 and 1.0
-PRESERVE = 1
+AGGRESSION_START = 0.8 # 0.8 might be a good choice after trying 0.618, 0.7, 0.8, 0.9 and 1.0
+AGGRESSION_MID = 0.618
+SHIFT = 5 # Shift base, the more shift, the more conserved
 
 class PlanetAI
   def initialize
@@ -57,6 +58,16 @@ class PlanetAI
     @lose_flag = false
     @eliminate_flag = false
     @my_planets = {}
+    @max_rearness = 0
+
+    nil_planets_ratio = @info['holds'].select { |h| h[0].nil? }.size
+    nil_planets_ratio /= @info['holds'].size.to_f
+    if nil_planets_ratio > 0.618
+      @aggresion = AGGRESSION_START
+      puts "Aggression: #@aggresion"
+    else
+      @aggresion = AGGRESSION_MID
+    end
 
     @map['planets'].each_with_index do | p, ind |
       # Check whether it is owned by me
@@ -113,6 +124,7 @@ class PlanetAI
         nearest_neighbor = neighbors.map { |n| [ n[0], my_planets[n[0]][:rearness] + n[1] ] }.min_by { |n| n[1] }
         @my_planets[id][:targets] = nearest_neighbor[0]
         @my_planets[id][:rearness] = nearest_neighbor[1]
+        @max_rearness = [@max_rearness, nearest_neighbor[1]].max
       end
 
       my_planets = @my_planets
@@ -142,7 +154,7 @@ class PlanetAI
     spare_forces = {}
     @my_planets.each do |id, p|
       all_force = @info['holds'][id][1]
-      max_force = [(all_force * AGGRESION).to_i, all_force - 1].min
+      max_force = [(all_force * @aggresion).to_i, all_force - SHIFT].min
       if p[:rearness] == 0
         spare_force, nearest_round = spare_force_on_first_invasion(id)
         spare_force = [spare_force, max_force].min
@@ -227,11 +239,17 @@ class PlanetAI
 
       count = @info['holds'][id][1]
       if @eliminate_flag
-        left_force = (count * (1-AGGRESION)).to_i
+        # Preserve rate = e ^ -rearness
+        #rate = Math.exp(-@aggresion)
+        rate = Math.exp( -(p[:rearness] / @max_rearness.to_f) )
+        left_force = (count * rate).to_i
       elsif q['res'] > 1
         left_force = ((q['max'] - q['cos']) / q['res']).to_i
       else
-        left_force = (q['max'] * PRESERVE - q['cos']).to_i
+        # Preserve rate = e ^ -rearness
+        rate = Math.exp( -(p[:rearness] / @max_rearness.to_f) )
+#        puts "rate: #{rate} #{p[:rearness]} / #@max_rearness"
+        left_force = (q['max'] * rate - q['cos']).to_i
       end
       left_force = [left_force, 1].max
       send = count - left_force
@@ -274,7 +292,7 @@ class PlanetAI
     # Gather all invasions
     invasions = @info['moves'].select { |m| m[0] != @me['seq'] && m[2] == id }.group_by { |m| m[4] }
     if invasions.empty?
-      spare_force = @info['holds'][id][1] - 1
+      spare_force = @info['holds'][id][1] - SHIFT
       spare_force = [spare_force, 0].max
       return [spare_force, nil]
     end
@@ -298,7 +316,7 @@ class PlanetAI
       spare_force = [spare_force, 0].max
     end
 
-    return [spare_force, nearest_round]
+    return [spare_force - SHIFT, nearest_round]
   end
 
   def planet_production(id, planet_count)
@@ -389,7 +407,11 @@ ai.cmd_map
 ai.cmd_add
 while true
   sleep 0.3
-  ai.cmd_info
-  ai.step
-#  puts ai.step
+  begin
+    ai.cmd_info
+    ai.step
+#    puts ai.step
+  rescue
+    puts 'Network error, reconnecting...'
+  end
 end
