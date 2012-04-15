@@ -1,12 +1,13 @@
 require 'json'
 require 'net/http'
+require 'timeout'
 
-SERVER = "localhost"
+SERVER = "10.77.77.111"
 PORT = 9999
 ROOM = 0
 AGGRESSION_START = 0.8 # 0.8 might be a good choice after trying 0.618, 0.7, 0.8, 0.9 and 1.0
 AGGRESSION_MID = 0.618
-SHIFT = 5 # Shift base, the more shift, the more conserved
+SHIFT = 2 # Shift base, the more shift, the more conserved
 
 class PlanetAI
   def initialize
@@ -45,6 +46,11 @@ class PlanetAI
   def cmd_info
     @info = cmd "info"
     exit if @info['status'] == 'finished'
+    # Info about moves
+#    print 'My moves: '
+#    print @info['moves'].select { |m| m[0] == @me['seq'] }.map { |m| m[4] }.join(' ') + "\n"
+#    print 'Enemy moves: '
+#    print @info['moves'].select { |m| m[0] == @me['seq'] }.map { |m| m[4] }.join(' ') + "\n"
   end
 
   def cmd_moves moves
@@ -406,11 +412,13 @@ ai = PlanetAI.new
 ai.cmd_map
 ai.cmd_add
 while true
-  sleep 0.3
   begin
-    ai.cmd_info
-    ai.step
-#    puts ai.step
+    Timeout::timeout(2) {
+      sleep 0.3
+      ai.cmd_info
+      ai.step
+#      puts ai.step
+    }
   rescue
     puts 'Network error, reconnecting...'
   end
