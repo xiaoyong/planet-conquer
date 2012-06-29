@@ -124,7 +124,8 @@ class Game():
             if kw['op'] == 'moves':
                 moves = []
                 for count, _from, to in kw['moves']:
-                    if count == 0: continue
+                    count = int(count)
+                    if count <= 0: continue
                     # 检查moves合法性
                     owner, armies = self.holds[_from]
                     if owner != n:
@@ -298,9 +299,9 @@ class Game():
             self.start()
             return True
 
-        # 游戏开始的时候, 需要有2个以上的玩家加入.
+        # 游戏开始的时候, 需要有N个以上的玩家加入.
         if self.status == WAITFORPLAYER:
-            if len(self.players) < 2: return
+            if len(self.players) < self.map.min_player: return
             self.status = RUNNING
             self.log('game running.')
 
