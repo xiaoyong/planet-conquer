@@ -414,7 +414,6 @@ ai.cmd_add
 while true
   begin
     Timeout::timeout(2) {
-      sleep 0.3
       ai.cmd_info
       ai.step
 #      puts ai.step
@@ -422,4 +421,5 @@ while true
   rescue
     puts 'Network error, reconnecting...'
   end
+  sleep 0.3
 end
